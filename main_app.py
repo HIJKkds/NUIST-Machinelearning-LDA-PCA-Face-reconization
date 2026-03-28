@@ -21,6 +21,8 @@ class FaceRecognitionApp:
         
         self.X_test = None
         self.y_test = None
+        self.X_train = None
+        self.y_train = None
 
         self._build_ui()
         self._log("系统初始化完成。准备就绪。")
@@ -86,18 +88,30 @@ class FaceRecognitionApp:
     def action_save(self):
         path = filedialog.asksaveasfilename(defaultextension=".pkl", filetypes=[("Model Files", "*.pkl")])
         if path:
-            self.model.save(path)
-            self._log(f"[*] 模型保存至: {path}")
+            extra_data = {
+                'X_train': self.X_train, 'y_train': self.y_train,
+                'X_test': self.X_test, 'y_test': self.y_test
+            }
+            self.model.save(path, extra=extra_data)
+            self._log(f"[*] 模型及数据集缓存已保存至: {path}")
             self._status("模型保存成功", "green")
 
     # 载入计算模型参数
     def action_load(self):
         path = filedialog.askopenfilename(filetypes=[("Model Files", "*.pkl")])
         if path:
-            self.model.load(path)
-            self.X_test = self.y_test = None  # 加载外部模型使缓存的测试集失效
+            d = self.model.load(path)
+            self.X_train = d.get('X_train')
+            self.y_train = d.get('y_train')
+            self.X_test  = d.get('X_test')
+            self.y_test  = d.get('y_test')
+            
             self._log(f"[*] 加载外部模型: {path}")
             self._log(f"    - 阈值参数: Prob={self.model.prob_thr}, Dist={self.model.dist_thr:.4f}")
+            if self.X_test is not None and len(self.X_test) > 0:
+                self._log(f"    - 附带训练集: {len(self.X_train) if self.X_train is not None else 0} 张 | 测试集: {len(self.X_test)} 张")
+            else:
+                self._log("    - 该模型未查找到附加的数据集缓存")
             self._status("模型加载成功", "green")
 
     # 后台训练主事件
@@ -125,7 +139,8 @@ class FaceRecognitionApp:
         self._status("重构分类平面...", "blue")
         
         res = self.model.train(Xt, yt)
-        self.X_test, self.y_test = Xv, yv
+        self.X_train, self.y_train = Xt, yt
+        self.X_test, self.y_test   = Xv, yv
 
         self._log(f"[*] 训练完成! 总类别={res['n_classes']}, 增广样本数={res['n_samples']}")
         self._log(f"    - 特征维度: {res['feat_dim']} -> PCA {res['n_pca']}维")

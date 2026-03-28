@@ -66,8 +66,18 @@ class ClassicFaceRecognizer:
 
     # 预测：返回含 status/class/prob/dist/top3 的结果字典
     def predict(self, vec):
-        X_s = self.scaler.transform([vec])
-        X_p = self.pca.transform(X_s)
+        # 兼容旧版本可能缺失 scaler/pca 的情况
+        if getattr(self, 'scaler', None) is not None and hasattr(self.scaler, 'mean_'):
+            X_s = self.scaler.transform([vec])
+        else:
+            X_s = [vec]
+            
+        if getattr(self, 'pca', None) is not None:
+            X_p = self.pca.transform(X_s)
+        elif getattr(self, 'lda', None) is not None:
+            X_p = self.lda.transform(X_s)
+        else:
+            X_p = X_s
 
         probs = self.svm.predict_proba(X_p)[0]
         idx   = int(np.argmax(probs))
@@ -97,18 +107,39 @@ class ClassicFaceRecognizer:
             return {**info, 'status': 'accepted'}
 
     # 保存模型到磁盘
-    def save(self, path):
-        joblib.dump({
-            'scaler': self.scaler, 'pca': self.pca, 'svm': self.svm,
+    def save(self, path, extra=None):
+        data = {
+            'scaler': getattr(self, 'scaler', None), 
+            'pca': getattr(self, 'pca', getattr(self, 'lda', None)), 
+            'svm': getattr(self, 'svm', None),
             'centroids': self.centroids,
             'prob_thr': self.prob_thr, 'dist_thr': self.dist_thr,
-        }, path)
+        }
+        if extra:
+            data.update(extra)
+        joblib.dump(data, path)
 
     # 从磁盘加载模型
     def load(self, path):
         d = joblib.load(path)
-        self.scaler, self.pca, self.svm = d['scaler'], d['pca'], d['svm']
-        self.centroids = d['centroids']
-        self.prob_thr  = d['prob_thr']
-        self.dist_thr  = d['dist_thr']
+        
+        # 兼容旧版本保存的模型结构
+        if isinstance(d, dict):
+            self.scaler = d.get('scaler', getattr(self, 'scaler', None))
+            self.pca    = d.get('pca', d.get('lda', getattr(self, 'pca', None)))
+            self.svm    = d.get('svm', d.get('classifier', getattr(self, 'svm', None)))
+            
+            self.centroids = d.get('centroids', d.get('class_centroids', {}))
+            if self.centroids is None: self.centroids = {}
+            
+            p_thr = d.get('prob_thr', d.get('prob_threshold', 0.0))
+            self.prob_thr = float(p_thr) if p_thr is not None else 0.0
+            
+            d_thr = d.get('dist_thr', d.get('dist_threshold', 0.0))
+            self.dist_thr = float(d_thr) if d_thr is not None else 0.0
+        else:
+            # 如果旧版本保存的不是字典对象，此处可以根据实际情况进行错误提示或特殊处理
+            raise ValueError("不支持的旧版模型格式，模型文件内容并非字典类型")
+        
         self.is_trained = True
+        return d
